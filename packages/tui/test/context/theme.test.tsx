@@ -3,7 +3,7 @@ import { CliRenderEvents, RGBA, type TerminalColors } from "@opentui/core"
 import { testRender } from "@opentui/solid"
 import { expect, test } from "bun:test"
 import { resolveThemeDocument } from "@opencode/theme/tui"
-import { ConfigProvider, useConfig, type Info } from "../../src/config"
+import { ConfigProvider, resolve, useConfig, type Info } from "../../src/config"
 import { ThemeProvider, useTheme, useThemes } from "../../src/context/theme"
 import { getOpenCodeTheme, getOpenCodeClassicTheme } from "../../src/theme"
 import { emptyThemeSource, tmpdir } from "../fixture/fixture"
@@ -106,6 +106,57 @@ test("names the new theme opencode and the previous one opencode-classic", async
     })
     expect(theme.background.base.equals(newTheme)).toBeTrue()
     expect(themes.has("opencode-classic")).toBeTrue()
+  } finally {
+    app.renderer.destroy()
+  }
+})
+
+test("restores the default theme when the configured theme is removed", async () => {
+  await using temporary = await tmpdir()
+  const settings: Info = {}
+  let config!: ReturnType<typeof useConfig>
+  let themes!: ReturnType<typeof useThemes>
+  function Probe() {
+    config = useConfig()
+    themes = useThemes()
+    return null
+  }
+  const app = await testRender(() => (
+    <TestTuiContexts paths={{ state: temporary.path }}>
+      <ConfigProvider
+        config={resolve(settings, { terminalSuspend: true, environment: {} })}
+        service={{
+          get: async () => settings,
+          update: async (update) => {
+            update(settings)
+            return settings
+          },
+        }}
+      >
+        <ThemeProvider mode="dark" source={emptyThemeSource}>
+          <Probe />
+        </ThemeProvider>
+      </ConfigProvider>
+    </TestTuiContexts>
+  ))
+
+  try {
+    app.renderer.start()
+    await app.waitForFrame(() => themes !== undefined)
+    expect(themes.selected).toBe("opencode")
+    const defaultBackground = themes.current.background.base
+    await config.update((draft) => {
+      draft.theme = { name: "gruvbox" }
+    })
+    await app.renderOnce()
+    expect(themes.selected).toBe("gruvbox")
+    expect(themes.current.background.base.equals(defaultBackground)).toBeFalse()
+    await config.update((draft) => {
+      delete draft.theme
+    })
+    await app.renderOnce()
+    expect(themes.selected).toBe("opencode")
+    expect(themes.current.background.base.equals(defaultBackground)).toBeTrue()
   } finally {
     app.renderer.destroy()
   }
